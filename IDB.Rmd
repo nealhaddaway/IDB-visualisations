@@ -1,0 +1,730 @@
+---
+title: "Untitled"
+output: html_document
+date: "2025-05-20"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+libraries
+```{r}
+library(dplyr)
+library(tidyverse)
+library(stringr)
+library(ggplot2)
+#install.packages("maps")
+library(maps)
+#install.packages("networkD3")
+library(networkD3)
+#install.packages("remotes")
+#remotes::install_github("davidsjoberg/ggsankey")
+#install.packages("treemapify")
+library(treemapify)
+library(RColorBrewer)
+#install.packages("ggforce")
+library(ggforce)
+#install.packages("ggrepel")
+library(ggrepel)
+library(stringdist)
+
+library(ggraph)
+#install.packages("igraph")
+library(igraph)
+#install.packages("ggiraph")
+library(ggiraph)
+library(htmlwidgets)
+library(grid)
+library(cowplot)
+
+#install.packages("patchwork")
+library(patchwork)
+
+
+
+```
+
+
+read in file
+
+```{r}
+#setwd("~/Library/Mobile Documents/com~apple~CloudDocs/IDB")
+setwd("~/Library/CloudStorage/GoogleDrive-nealhaddaway@gmail.com/My Drive/contracts/CABI-Juno/IDB/Visualisations/IDB-visualisations")
+
+prov <- read.csv("provisional_data.csv")
+
+regions <- read.csv("idb_regions.csv") 
+
+
+
+
+```
+
+
+juno colours
+```{r}
+
+j_red <- "#ED412A"
+j_yellow <- "#F0C447"
+j_gold <- "#C5962E"
+j_orange <- "#F89D29"
+j_lgreen <- "#76BB57"
+j_dgreen <- "#507F4B"
+j_blue <- "#24BBE1"
+j_gray <- "#58595B"
+j_background <- "#353534"
+
+```
+
+
+Tidy data
+```{r}
+
+region2 <- regions %>% 
+  rename(idb_region = region)
+
+tidy <- prov %>% 
+  
+  ## tidy countries 
+  # get rid of number and .
+  mutate(country = gsub("[0-9]+\\.\\s", "", country)) %>% 
+  separate_rows(country, sep = ",") %>%
+  mutate(country = trimws(country)) %>%
+  # add broader
+  merge(region2, by = "country") %>% 
+  mutate(country = fct_reorder(country, idb_region, .fun = min)) %>% 
+  
+  
+  ## tidy primary_crops
+  # use , followed by capital letter as sep as commas elsewhere
+  separate_rows(primary_crop, sep = ", (?=[A-Z])") %>% 
+  ## remove everything between parentheses
+  mutate(primary_crop = gsub("\\s*\\([^\\)]+\\)", "", primary_crop)) %>% 
+  # get rid of word crops
+  mutate(primary_crop = gsub("crops", "", primary_crop)) %>% 
+  # shorten long names
+  mutate(primary_crop = case_when(str_detect(primary_crop, "None") ~ "None", 
+                                  str_detect(primary_crop, "Other") ~ "Other", 
+                                  str_detect(primary_crop, "Aggregated") ~ "Aggregated", 
+                                  TRUE ~ primary_crop)) %>% 
+  ## get rid of s at end of every word to standardise plurals
+  mutate(primary_crop = gsub("s\\b", "", primary_crop)) %>% 
+  ## get rid of eveyrthing after the commma in cases
+    mutate(primary_crop = gsub(",.*", "", primary_crop)) %>% 
+  ## replace and with &
+  mutate(primary_crop = gsub("and", "&", primary_crop)) %>% 
+## get rid of any loose ends
+      mutate(primary_crop = trimws((primary_crop))) %>% 
+  # order factors
+  mutate(primary_crop = factor(primary_crop, levels = c( "Cereal", "Pulse", "Root & tuber", "Vegetable", "Fruit", "Sugar","Oil", "Coffee","Cocoa","Other", "Aggregated", "None"))) %>%
+  
+  
+  # tidy primary_livestock
+  separate_rows(primary_livestock, sep = ",")  %>% 
+  mutate(primary_livestock = trimws(primary_livestock)) %>% 
+    ## remove everything between parentheses
+  mutate(primary_livestock= gsub("\\s*\\([^\\)]+\\)", "", primary_livestock)) %>% 
+  mutate(primary_livestock = case_when(str_detect(primary_livestock, "None") ~ "None", 
+                                        str_detect(primary_livestock, "Other") ~ "Other", 
+                                       str_detect(primary_livestock, "Meat") ~ "Meat", 
+                                       str_detect(primary_livestock, "Snail") ~ "Snail", 
+                                       str_detect(primary_livestock, "Aggregate") ~ "Aggregated", 
+                                       TRUE ~ primary_livestock)) %>% 
+  # get rid of plurals so standard across all
+  mutate(primary_livestock = gsub("s\\b", "", primary_livestock)) %>%
+  mutate(primary_livestock = str_to_sentence(primary_livestock)) %>%
+
+  mutate(primary_livestock = factor(primary_livestock, levels = c("Meat", "Offal", "Egg", "Milk", "Honey", "Snail", "Hide", "Skin", "Wool", "Silk-worm cocoon", "Reelable", "Beeswax", "Other", "Aggregated", "None"))) %>%
+  
+  
+  #tidy livestock
+  separate_rows(livestock, sep = ",") %>% 
+  mutate(livestock = trimws(livestock)) %>% 
+  mutate(livestock = str_squish(livestock)) %>% 
+  #rename long groups
+  mutate(livestock = case_when(str_detect(livestock, "None") ~ "None", 
+                                 str_detect(livestock, "Other") ~ "Other",
+                                 str_detect(livestock, "Aggregated") ~ "Aggregated", 
+                                 str_detect(livestock, "Bees") ~ "Bees",
+                                 TRUE ~ livestock)) %>% 
+  ## remove everything between parentheses
+  mutate(livestock = gsub("\\s*\\([^\\)]+\\)", "", livestock)) %>% 
+  #standardise plurals
+  mutate(livestock = gsub("s\\b", "", livestock)) %>% 
+  mutate(livestock = factor(livestock, levels = c("Cattle", "Sheep",  "Goat","Camelid", "Pig", "Chicken", "Bee", "Other", "Aggregated", "None"))) %>% 
+  
+  
+   # tidy intervention
+   separate_rows(intervention, sep = ",") %>%
+   mutate(intervention = trimws(intervention)) %>% 
+   #sep hierachical data
+   separate(intervention, into = c("intervention_number", "intervention"), sep = "\\.") %>% 
+   #sep heerachical data
+   separate(intervention, into = c("broad_intervention", "intervention"), sep = "\\:") %>%
+   mutate(intervention = case_when(is.na(intervention) ~ broad_intervention, 
+                                   TRUE ~ intervention)) %>% 
+  
+   
+  ### tidy intervention
+   mutate(intervention = gsub(" and", " &", intervention)) %>% 
+   mutate(intervention = trimws(intervention)) %>% 
+   mutate(intervention = str_squish(intervention)) %>% 
+   mutate(intervention = str_to_sentence(intervention)) %>% 
+  # standardise - acronyms not used on rest
+   mutate(intervention = gsub("Pes", "Payment for ecosystem services", intervention)) %>%
+  mutate(intervention = gsub(" interventions", "", intervention)) %>%
+  #get rid of anything in paraentheses
+   mutate(intervention = gsub("\\s*\\([^\\)]+\\)", "", intervention)) %>%
+   mutate(intervention = gsub("r&d", "R&D", intervention)) %>% 
+   
+   ### tidy broad intervention
+   mutate(broad_intervention = trimws(broad_intervention)) %>% 
+   mutate(broad_intervention = str_to_sentence(broad_intervention)) %>% 
+   ## remove everything between parentheses
+   mutate(broad_intervention = gsub("\\s*\\([^\\)]+\\)", "", broad_intervention)) %>% 
+   mutate(broad_intervention = gsub(" and", " &", broad_intervention)) %>%
+   # get rid of word interventions from end as obsolete
+   mutate(broad_intervention = gsub("interventions", "", broad_intervention)) %>%
+   # captlise R & D
+   mutate(broad_intervention = gsub("r&d", "R&D", broad_intervention)) %>% 
+   mutate(broad_intervention = str_squish(broad_intervention)) %>%
+   # order variables
+   mutate(broad_intervention = factor(broad_intervention, levels = c("Rural infrastructure", "Land regularization & administration", "Regulations & institutions", "Sanitary & phytosanitary", "Food safety", "Financial services", "Input support/subsidies", "Financing or development of business plans", "Associativity", "Extension services & technical assistance", "Technology transfers", "Agricultural R&D", "General human capital strengthening", "Natural resource management"))) %>% 
+  
+  # tidy climate perspective
+  separate_rows(climate_perspective, sep = ",") %>% 
+  separate(climate_perspective, into = c("climate_perspective", "cp_example"), sep = ":") %>% 
+  mutate(climate_perspective = case_when(str_detect(climate_perspective, "None") ~ "None", 
+                                 TRUE ~ climate_perspective)) %>% 
+  mutate(climate_perspective = str_squish(climate_perspective)) %>% 
+  mutate(climate_perspective = trimws(climate_perspective)) %>%
+  #remove intervention aims bit as obsolete
+  mutate(climate_perspective = gsub("Intervention aims at ", "", climate_perspective)) %>%
+  mutate(climate_perspective = str_to_sentence(climate_perspective)) %>% 
+
+ #tidy diverse population
+ mutate(diverse_population = case_when(str_detect(diverse_population, "None") ~ "None", 
+                                        TRUE ~ diverse_population)) %>% 
+mutate(diverse_population = factor(diverse_population, levels =c("Indigenous communities", "Women", "None") )) %>% 
+  
+  # tidy methodology
+  separate_rows(methodology, sep = ",") %>% 
+  mutate(methodology = trimws(methodology)) %>%
+  #get rid fo everything in parentheses
+  mutate(methodology= gsub("\\s*\\([^\\)]+\\)", "", methodology)) %>% 
+  mutate(methodology = str_to_sentence(methodology)) %>% 
+  #change acronym (assume this is the right one...)
+  mutate(methodology = case_when(str_detect("Cge", methodology) ~ "Computable general equilibrium", 
+                                 TRUE ~ methodology)) %>% 
+  #remove word methods as obsolete
+  mutate(methodology = gsub(" methods", "", methodology)) %>% 
+  #standardise space between slashes
+  mutate(methodology = gsub(" / ", "/", methodology)) %>% 
+  # tidy factor order
+ mutate(methodology = factor(methodology, levels = c("Data envelopment analysis", "Stochastic production frontier", "Computable general equilibrium", "Simulations", "Quasi-experimental", "Other econometric/statistical", "Other quantitative/non-econometric"))) %>% 
+  
+  #calcualte approx study length
+  mutate(approximate_length = end_year - start_year) %>% 
+  
+  # tidy ag_subsector
+  separate_rows(ag_subsector, sep = ", (?=[A-Z])") %>% 
+  mutate(ag_subsector = case_when(str_detect(ag_subsector, "Mixed systems") ~ "Mixed systems", 
+                                 TRUE ~ ag_subsector)) 
+  
+
+  
+  
+
+list(unique(tidy$country))
+list(unique(tidy$primary_crop))
+list(unique(tidy$primary_livestock))
+list(unique(tidy$livestock))
+list(unique(tidy$intervention))
+list(unique(tidy$broad_intervention))
+list(unique(tidy$livestock))
+list(unique(tidy$climate_perspective))
+list(unique(tidy$diverse_population))
+list(unique(tidy$methodology))
+list(unique(tidy$ag_subsector))
+
+
+```
+testing the idea of putting carribbean in idb country heatmaps
+```{r}
+
+Carrb_hm <- tidy %>% 
+  select(primary_crop) %>% 
+  distinct() %>% 
+  mutate(idb_region = "Caribbean") %>% 
+  mutate(count = NA)
+
+check <- tidy %>%
+    select(idb_region, primary_crop, title) %>% 
+    distinct() %>%
+    group_by(idb_region, primary_crop) %>%
+    summarise(count = n()) %>%
+  ungroup() %>% 
+    complete(idb_region, primary_crop, fill = list(count = NA))
+```
+
+
+Heat maps 
+
+```{r}
+
+
+
+
+#list_x <- c("country","idb_region", "climate_perspective", "diverse_population", "ag_subsector", "")
+#list_y <- c("primary_crop", "livestock", "primary_livestock", "broad_intervention", "methodology")
+
+
+pairs <- list(
+  c("country", "primary_crop"),
+  c("country", "livestock"),
+  c("country", "primary_livestock"),
+  c("country", "broad_intervention"),
+  c("idb_region", "primary_crop"),
+  c("idb_region", "livestock"),
+  c("idb_region", "primary_livestock"),
+  c("idb_region", "broad_intervention"),
+  c("climate_perspective", "broad_intervention"),
+   c("diverse_population", "broad_intervention"),
+   c("ag_subsector", "broad_intervention")
+)
+
+
+
+all_heatmap_plots <- list()
+
+
+make_heatmap <- function(df, x, y) {
+  
+  #top_90_percentile <- quantile(df$count, 0.95, na.rm = TRUE)
+
+
+  ggplot(df, aes_string(x = x, y = y, fill = "count")) +
+    geom_tile(colour = "white", size = 0.8) +
+    #scale_fill_binned(low = "white", high = j_dgreen, na.value = "lightgray") +
+     scale_fill_stepsn(
+        colours = colorRampPalette(c("#D4E4D4", j_dgreen))(4),
+        breaks = c(5, 10, 15, 20),
+        limits = c(0, 20),
+        na.value = "lightgray" ) +
+    geom_text(aes_string(label = "count", colour = "ifelse(count > 10, 'white', 'black')"), size = 3) +
+    scale_y_discrete(labels = function(y) str_wrap(y, width = 30), limits = rev(unique(df[[y]])))+
+    scale_x_discrete(labels = function(x) str_wrap(x, width = 8)) +
+    scale_color_manual(values = c("black" = "black", "white" = "white")) +
+    guides(color = "none") +
+    theme_classic() +
+    labs(x = "", y = "", fill = "") +
+    theme(
+      axis.ticks = element_blank(),
+      axis.line = element_blank(),
+      legend.position = "bottom"
+    ) +
+    scale_x_discrete(position = "top", name = "") 
+}
+
+
+heat_map_counts <- function(x, y){
+  tidy %>%
+    select(all_of(c(x, y, "title"))) %>%
+    distinct() %>%
+    group_by(across(all_of(c(x, y)))) %>%
+    summarise(count = n(), .groups = "drop") %>% 
+    
+    complete(!!sym(x), !!sym(y), fill = list(count = NA))
+}
+
+# All combinations
+#combos <- expand.grid(x = list_x, y = list_y, stringsAsFactors = FALSE)
+
+# Loop through each combination and assign to dynamically named variables
+
+
+#pwalk(combos, function(x, y) {
+ # df <- heat_map_counts(x, y)
+  walk(pairs, function(pair) {
+  x <- pair[1]
+  y <- pair[2]
+
+  df <- heat_map_counts(x, y)
+  
+  df_name <- paste0(x, "_", y, "_heatmap_df")
+  assign(df_name, df, envir = .GlobalEnv)
+
+  # Create heatmap
+  plot <- make_heatmap(df, x, y)
+
+
+  # Assign plot
+  plot_name <- paste0(x, "_", y, "_heatmap_plot")
+  all_heatmap_plots[[plot_name]] <<- plot
+  #assign(plot_name, plot, envir = .GlobalEnv)
+})
+
+
+for (plot_name in names(all_heatmap_plots)) {
+  print(all_heatmap_plots[[plot_name]])
+}
+
+  
+### Because they are all different sizes I'm saving them one by one  
+ggsave(filename = "country_primary_crop_heatmap_plot.png", 
+       plot = all_heatmap_plots[["country_primary_crop_heatmap_plot"]],
+       width = 10, height = 3, units = "in", dpi = 300)
+
+ggsave(filename = "country_livestock_heatmap_plot.png", 
+       plot = all_heatmap_plots[["country_livestock_heatmap_plot"]],
+       width = 10, height = 3, units = "in", dpi = 300)
+
+ggsave(filename = "country_primary_livestock_heatmap_plot.png", 
+       plot = all_heatmap_plots[["country_primary_livestock_heatmap_plot"]],
+       width = 10, height = 4, units = "in", dpi = 300)
+
+ggsave(filename = "country_broad_intervention_heatmap_plot.png", 
+       plot = all_heatmap_plots[["country_broad_intervention_heatmap_plot"]],
+       width = 11, height = 5, units = "in", dpi = 300)
+
+ggsave(filename = "idb_region_primary_crop_heatmap_plot.png", 
+       plot = all_heatmap_plots[["idb_region_primary_crop_heatmap_plot"]],
+       width = 4, height = 3, units = "in", dpi = 300)
+
+ggsave(filename = "idb_region_livestock_heatmap_plot.png", 
+       plot = all_heatmap_plots[["idb_region_livestock_heatmap_plot"]],
+       width = 4, height = 3, units = "in", dpi = 300)
+
+ggsave(filename = "idb_region_primary_livestock_heatmap_plot.png", 
+       plot = all_heatmap_plots[["idb_region_primary_livestock_heatmap_plot"]],
+       width = 5, height = 2, units = "in", dpi = 300)
+
+ggsave(filename = "idb_region_broad_intervention_heatmap_plot.png", 
+       plot = all_heatmap_plots[["idb_region_broad_intervention_heatmap_plot"]],
+       width = 8, height = 6, units = "in", dpi = 300)
+
+ggsave(filename = "climate_perspective_broad_intervention_heatmap_plot.png", 
+       plot = all_heatmap_plots[["climate_perspective_broad_intervention_heatmap_plot"]],
+       width = 10, height = 5, units = "in", dpi = 300)
+
+ggsave(filename = "diverse_population_broad_intervention_heatmap_plot.png", 
+       plot = all_heatmap_plots[["diverse_population_broad_intervention_heatmap_plot"]],
+       width = 7, height =5, units = "in", dpi = 300)
+
+ggsave(filename = "ag_subsector_broad_intervention_heatmap_plot.png", 
+       plot = all_heatmap_plots[["ag_subsector_broad_intervention_heatmap_plot"]],
+       width = 7, height = 5, units = "in", dpi = 300)
+
+
+```
+
+countries plots
+```{r}
+# Data preparation
+countries <- tidy %>% 
+  select(title, country, idb_region) %>% 
+  distinct() %>% 
+  group_by(country) %>% 
+  summarise(count = n()) %>% 
+  rename(region = country)
+
+world_map <- map_data("world") %>% filter(!region %in% "Antarctica")
+
+region3 <- region2 %>% 
+  rename(region = country)
+
+## empty rest of map
+
+n_inc <- region3 %>% 
+  mutate(inc = "inc") %>% 
+  merge(world_map, by = "region", all = TRUE) %>% 
+  filter(is.na(inc)) 
+
+# Define regions
+Andean <- region3 %>% filter(idb_region == "Andean")
+Central_am <- region3 %>% filter(idb_region == "Central America")
+Carrib <- region3 %>% filter(idb_region == "Caribbean")
+South <- region3 %>% filter(idb_region == "Southern Cone")
+
+# Maps
+world_map <- map_data("world") %>% filter(!region %in% "Antarctica")
+SA_map <- world_map %>% filter(region %in% region3$region)
+Andean_map <- world_map %>% filter(region %in% Andean$region)
+Central_am_map <- world_map %>% filter(region %in% Central_am$region)
+Carrib_map <- world_map %>% filter(region %in% Carrib$region)
+South_con_map <- world_map %>% filter(region %in% South$region)
+
+# List of maps
+#map_list <- list(world_map, SA_map, Andean_map, Central_am_map, Carrib_map, South_con_map)
+
+map_list <- list(
+  World = world_map, 
+  SouthAmerica = SA_map, 
+  Andean = Andean_map, 
+  CentralAmerica = Central_am_map, 
+  Caribbean = Carrib_map, 
+  SouthernCone = South_con_map
+)
+
+
+plot_maps <- function(map_list) {
+  plots <- list()
+  
+  for (i in seq_along(map_list)) {
+    map_df <- map_list[[i]]
+    map_name <- names(map_list)[i]
+    
+    wm <- merge(map_df, countries, by = "region", all.x = TRUE) #%>%
+     # mutate(count = replace(count, is.na(count), 0))
+    
+    p <- ggplot() +
+      geom_map(data = wm, map = map_df,
+               aes(map_id = region, fill = count),
+               color = "white", size = 0.1) +
+      expand_limits(x = map_df$long, y = map_df$lat) +
+      theme_minimal() +
+      #scale_fill_binned(low = "white", high = j_dgreen, na.value = "lightgray") +
+      scale_fill_stepsn(
+        colours = colorRampPalette(c("#D4E4D4", j_dgreen))(5),
+        breaks = c(5, 10, 15, 20, 25),
+        limits = c(0, 25),
+        na.value = "lightgray" ) +
+      labs(
+           title = "", #,
+           #title = map_name, 
+           fill = "") +
+      theme(axis.text = element_blank(), 
+            legend.text = element_text(size = 14),   
+            legend.title = element_text(size = 16),
+            legend.key.size = unit(1.2, "cm"), 
+            axis.ticks = element_blank(), 
+            panel.grid = element_blank(),
+            axis.title = element_blank(), 
+            legend.position = "bottom") +
+      coord_quickmap()
+  
+    
+    plots[[map_name]] <- p  # Use name instead of numeric index
+    print(p)
+  }
+  
+  return(plots)
+}
+
+
+plot_list <- plot_maps(map_list)
+
+
+
+andean <- plot_list[["Andean"]]
+central_am <- plot_list[["CentralAmerica"]]
+caribbean <- plot_list[["Caribbean"]]
+southern_cone <- plot_list[["SouthernCone"]]
+world <- plot_list[["World"]]
+SA <- plot_list[["SouthAmerica"]]
+
+
+
+final <-
+  ((andean + labs(title = "Andean") + theme(legend.position = "bottom")) |
+   (central_am + labs(title = "Central America") + theme(legend.position = "none"))) /
+  ((caribbean + labs(title = "Caribbean") + theme(legend.position = "none")) |
+   (southern_cone + labs(title = "Southern Cone") + theme(legend.position = "none"))) +
+  plot_layout(guides = "collect") &
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(hjust = 0.5)  # Center each plot title
+  )
+
+
+ggsave("separate_chloropleth.png", plot = final, width = 10, height = 8, dpi = 300)
+ggsave("world_chloropleth.png", plot = world, width = 10, height = 8, dpi = 300)
+ggsave("SA_chloropleth.png", plot = SA, width = 10, height = 8, dpi = 300)
+
+
+```
+
+
+amazon vs not amazon
+```{r}
+
+amazon <- prov %>% 
+  select(title, region) %>% 
+  group_by(region) %>% 
+  summarise(count = n()) %>% 
+  mutate(stack = "stack")
+
+
+### Pie chart
+
+pie <- ggplot(amazon, aes(x = "", y = count, fill = region)) +
+   scale_fill_manual(values = c("Amazon" = j_dgreen, "Not Amazon" = j_orange), name = "") +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  theme_void() +  # Clean, no axes
+ # labs(title = "Review Type Distribution") +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16),
+    legend.title = element_blank()
+  )
+
+ggsave("amazon_pie.png", plot = pie, width = 10, height = 8, dpi = 300)
+
+
+### Stacked bar chart
+
+stack <- ggplot(amazon, aes(x=stack, y=count, fill = region) )+
+  geom_bar(position = "stack", stat= "identity") +
+   scale_fill_manual(values = c("Amazon" = j_dgreen, "Not Amazon" = j_orange), name = "") +
+  theme_classic()+
+  scale_x_discrete(name = "Region")+
+   scale_y_continuous(
+     name = "Number of publications",
+    limits = c(0, 60),
+    expand = c(0, 0),
+  ) + 
+  #  scale_x_continuous(breaks = seq(0, 30, by = 5), name = "Number of reviews", 
+   #                    expand =c(0,100) )+
+  theme(
+    axis.text = element_text(size = 14),  # Increase axis tick labels
+    axis.title = element_text(size = 16), 
+    axis.text.x = element_blank()) #+# Increase axis titles
+
+ggsave("amazon_stack.png", plot = stack, width = 10, height = 8, dpi = 300)
+
+
+```
+
+radial hierachical plot
+```{r}
+
+
+  
+Total <- tidy %>% 
+  select(title) %>% 
+  distinct() %>% 
+ summarise(count = n()) %>% 
+  mutate(to = "Total") %>% 
+  mutate(from = NA) %>% 
+  select(from, to, count)
+
+
+
+BroadT <- tidy %>% 
+  select(title, broad_intervention) %>% 
+  distinct() %>% 
+  group_by(broad_intervention) %>% 
+  summarise(count = n()) %>%
+  ungroup() %>% 
+  mutate(to = broad_intervention) %>% 
+  mutate(from = "Total") %>% 
+  select(from, to, count)
+
+
+
+Subtopic <- tidy %>% 
+  select(title, broad_intervention, intervention) %>% 
+  distinct() %>% 
+  group_by(broad_intervention, intervention) %>% 
+  summarise(count = n()) %>% 
+  ungroup() %>% 
+  mutate(from = broad_intervention) %>% 
+  mutate(to= str_c(broad_intervention, intervention, sep = "_")) %>%
+  select(from, to,  count) %>% 
+  filter(!is.na(to))
+
+
+tog <- rbind(Total, BroadT, Subtopic)
+
+
+edges <- tog %>% select(from, to) %>% filter(!is.na(from))
+
+
+vertices <- tog %>% 
+  mutate(group = case_when(from != "Total" ~ gsub("_.*", "", from), 
+                           TRUE ~ to)) %>% 
+  mutate(name = to) %>%
+  mutate(label = gsub("^[^_]*_", "", name)) %>% 
+  mutate(label = str_replace_all(label, "_", " > ")) %>% 
+  mutate(label = paste0(label, " (n=", count, ")")) %>% 
+  select(-from, - to) %>% 
+  select(name, label, group, count) %>% 
+  mutate(count = case_when(name == "Total" ~ NA, 
+                           TRUE ~ count))
+
+
+mygraph <- graph_from_data_frame(edges, vertices = vertices)
+
+gdf <-  ggraph::create_layout(mygraph, layout = 'dendrogram', circular = TRUE)
+
+gdf$wrapped_label <- stringr::str_wrap(gdf$label, width = 30)
+
+
+
+ ggraph(gdf) + 
+  ggraph::geom_edge_diagonal(colour="grey") +
+    geom_node_point(aes(size = count, colour = group)) +
+  ggraph::geom_node_text(aes(x = x*1.15, y=y*1.15, 
+                             filter = leaf, ### only have labels on leafs 
+                             label = wrapped_label, 
+                             angle = -((-node_angle(x, y)+90)%%180)+90, 
+                             hjust='outward', colour=group), size=7, alpha=1) +
+ # ggiraph::geom_point_interactive(aes(x = x*1.07, y=y*1.07, 
+                                      ##data_id = id, 
+  #                                   color = group, size=count, 
+   #                                   tooltip = str_wrap(paste0(label, ' (n=', count, ')'), width = 50))) +
+   scale_colour_manual(values = c(
+  "#9E0142", "#D84F5C", "#E66D5F", "#F18C5F",
+  "#F9AC61", "#FCD46B", "#B6E093", "#85CFA1",
+  "#5BA8B6", "#4B75B0", "#5E4FA2", "black", "darkgrey", "#654321", "white"
+),
+name = "", 
+breaks = c(
+  "Natural resource management",
+  "Regulations & institutions",
+  "Sanitary & phytosanitary",
+  "Extension services & technical assistance",
+  "Associativity",
+  "Financial services",
+  "General human capital strengthening",
+  "Rural infrastructure",
+  "Technology transfers",
+  "Financing or development of business plans",
+  "Agricultural R&D",
+  "Input support/subsidies",
+  "Food safety",
+  "Land regularization & administration"
+))+
+#  ggplot2::scale_colour_manual(values = c("#4c956c", "#d1495b", "#5e548e", "#edae49", "#30638e", "black")
+                       #        , 
+                        #       name = "", 
+                         #      breaks = c("Business and economy", "Consumption", "Impacts", "Production", "Research methods")
+ #) +
+  guides(colour = guide_legend(override.aes = list(size = 5)))  +
+  ggplot2::scale_size_continuous(range = c(1,10)) +
+  ggplot2::theme_void() +
+  ggplot2::theme(
+    legend.position='bottom', 
+    legend.direction='vertical', 
+      legend.text = element_text(size = 18),
+    plot.margin = margin(2, 2, 2, 2, "cm")) +
+  ggplot2::expand_limits(x = c(-2, 2), y = c(-2, 2)) +
+  ggplot2::labs(size = "")+
+  coord_fixed( clip = "off") 
+  
+
+
+  
+   ggsave("IDB_radial plot.png", width = 15, height =25, units = "in", dpi = 600, pointsize = 20)
+
+
+
+
+```
+
+
+```{r}
+
+```
+
