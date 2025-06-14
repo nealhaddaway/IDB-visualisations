@@ -576,7 +576,7 @@ ggsave("amazon_pie.png", plot = pie, width = 10, height = 8, dpi = 300)
 
 stack <- ggplot(amazon, aes(x=stack, y=count, fill = region) )+
   geom_bar(position = "stack", stat= "identity") +
-   scale_fill_manual(values = c("Amazon" = j_dgreen, "Not Amazon" = j_orange), name = "") +
+   scale_fill_manual(values = c("Amazon" = j_dgreen, "Not Amazon" = "#d4e4d4"), name = "") +
   theme_classic()+
   scale_x_discrete(name = "Region")+
    scale_y_continuous(
